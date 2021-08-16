@@ -1,0 +1,8 @@
+{
+    "outDir": "",
+    "tries": -1,
+    "triesSleep": 1000,
+    "processes": {
+        "WebSockets": "php C:/laragon/www/open-control/artisan websockets:serve"
+    }
+}
