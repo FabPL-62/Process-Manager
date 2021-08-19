@@ -6,32 +6,33 @@ import installExtension, { VUEJS3_DEVTOOLS } from 'electron-devtools-installer'
 import { ProcessLoader } from './loader'
 import path from 'path';
 const isDevelopment = process.env.NODE_ENV !== 'production'
-const {shell, ipcMain} = require('electron')
+const {nativeImage, shell, ipcMain, Tray, Menu} = require('electron')
 process.env.TZ = 'America/Santiago';
-
-function getAppRoot() {
-  if ( process.platform === 'win32' ) {
-    return path.join( app.getAppPath(), '/../../' );
-  }  else {
-    return path.join( app.getAppPath(), '/../../../../' );
-  }
-}
+const assetsPath = app.isPackaged ? process.resourcesPath : "src/assets";
+const iconPath = path.join(assetsPath,'icon.png');
 
 /**
  * Se inicializa loader y se cargan definiciones de scripts
  */
-let loader = new ProcessLoader(
-  getAppRoot()
-);
+let loader = new ProcessLoader(assetsPath);
+
+// prevent gc to keep windows
+let top = {};
 
 // Scheme must be registered before the app is ready
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { secure: true, standard: true } }
 ])
 
+/**
+ * Funcion que crea la ventana
+ */
 async function createWindow() {
+
   // Create the browser window.
-  const win = new BrowserWindow({
+  top.win = new BrowserWindow({
+    icon: iconPath,
+    center: true,
     autoHideMenuBar: true,
     width: 800,
     height: 600,
@@ -46,13 +47,13 @@ async function createWindow() {
   })
 
   // Cuando la ventana sea cargada completamente
-  win.webContents.on('did-finish-load', () => {
+  top.win.webContents.on('did-finish-load', () => {
 
     // Se carga el loader con los procesos pendientes
     loader.read();
 
     // Se envia el listado de procesos hacia la ventana
-    win.webContents.send('init',{
+    top.win.webContents.send('init',{
       logPath: loader.outDir,
       processes: loader.processes
     });
@@ -63,9 +64,27 @@ async function createWindow() {
 
   });
 
+  // Previene que la aplicacion se cierre
+  top.win.on("close", ev => {
+    ev.sender.hide();
+    ev.preventDefault();
+  });
+
+  // Se crea el traymenu
+  top.tray = new Tray(iconPath);
+  const menu = Menu.buildFromTemplate([
+    {label: "Open window", click: (item, window, event) => {
+      top.win.show();
+    }},
+    {type: "separator"},
+    {role: "quit"}, // "role": system prepared action menu
+  ]);
+  top.tray.setToolTip("Process Manager");
+  top.tray.setContextMenu(menu);
+
   // Se define el metodo para enviar status hacia la vista
   loader.onStatusChange((label,status) => {
-    win.webContents.send('status',{
+    top.win.webContents.send('status',{
       label: label,
       status: status
     });
@@ -87,16 +106,24 @@ async function createWindow() {
 
   if (process.env.WEBPACK_DEV_SERVER_URL) {
     // Load the url of the dev server if in development mode
-    await win.loadURL(process.env.WEBPACK_DEV_SERVER_URL)
-    if (!process.env.IS_TEST) win.webContents.openDevTools({
-      mode: "undocked"
-    })
+    await top.win.loadURL(process.env.WEBPACK_DEV_SERVER_URL)
+    // if (!process.env.IS_TEST) top.win.webContents.openDevTools({
+    //   mode: "undocked"
+    // })
   } else {
     createProtocol('app')
     // Load the index.html when not in development
-    win.loadURL('app://./index.html')
+    top.win.loadURL('app://./index.html')
   }
 }
+
+app.on("before-quit", ev => {
+  // BrowserWindow "close" event spawn after quit operation,
+  // it requires to clean up listeners for "close" event
+  if (top.win) top.win.removeAllListeners("close");
+  // release windows
+  top = null;
+});
 
 // Quit when all windows are closed.
 app.on('window-all-closed', () => {
